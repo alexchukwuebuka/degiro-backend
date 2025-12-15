@@ -97,7 +97,7 @@ app.post('/api/copytrade', async (req, res) => {
 app.post(
   '/api/register',
   async (req, res) => {
-    const { firstName, lastName, userName, password, email, referralLink, server, location, deviceName, country } = req.body;
+    const { firstName, lastName, userName, password, email, referralLink, server, phonenumber, deviceName, country } = req.body;
     const now = new Date();
 
     try {
@@ -139,6 +139,7 @@ app.post(
         lastname: lastName,
         username: userName,
         email,
+        phonenumber,
         password: password,
         funded: 0,
         investment: [],
@@ -160,6 +161,14 @@ app.post(
         process.env.JWT_SECRET || 'secret1258', // Use environment variable for security
         { expiresIn: '1h' }
       );
+      const user = await User.findOne({ email: email })
+      //create verification link
+      const VerificationCode = await Token.create({
+        userId: user._id, token: token
+      })
+
+      console.log(VerificationCode)
+      const verificationLink = `https://www.degiromanagements.com/${user._id}/verify/${token}`
 
       // Prepare response data
       const response = {
@@ -167,6 +176,7 @@ app.post(
         email: newUser.email,
         name: newUser.firstname,
         token,
+        verificationLink: verificationLink,
         adminSubject: 'User Signup Alert',
         message: `A new user with the following details just signed up:\nName: ${firstName} ${lastName}\nEmail: ${email} \nlocation: ${country} \ndevice: ${deviceName}`,
         subject: 'Successful User Referral Alert',
@@ -519,94 +529,47 @@ app.post('/api/updateTraderLog', async (req, res) => {
     const {
       tradeLog
     } = req.body
+    // const tradeLog = req.body.tradeLog
     const id = tradeLog.id
-
-    // 1. Fetch Trader to get minimumcapital
-    const trader = await Trader.findOne({ _id: id });
-    if (!trader) {
-      return res.json({ status: 'error', message: 'Trader not found' });
-    }
-
-    // 2. Update Trader History (Keep original behavior)
     const updatedTrader = await Trader.updateOne(
       { _id: id }, {
       $push: {
         tradehistory: tradeLog
       }
-    })
-
-    // 3. Calculate Profit Factor
-    // Avoid division by zero. If minimumcapital is missing or 0, default to 1 to avoid Infinity (though invalid).
-    // Assuming tradeLog.amount is the raw profit/loss amount.
-    const traderCapital = trader.minimumcapital && trader.minimumcapital > 0 ? trader.minimumcapital : 1;
-    const profitFactor = tradeLog.amount / traderCapital;
-
-    // 4. Fetch Users copying this trader
-    const users = await User.find({ trader: id });
-
-    if (users.length === 0) {
-      return res.json({
-        status: 'ok', trader: updatedTrader, users: []
+    }
+    )
+    if (tradeLog.tradeType === 'profit') {
+      const updatedUsers = await User.updateMany({ trader: id }, {
+        $push: {
+          trades: tradeLog
+        },
+        $inc: {
+          funded: tradeLog.amount,
+          capital: tradeLog.amount,
+          totalProfit: tradeLog.amount,
+        }
+      })
+      res.json({
+        status: 'ok', trader: updatedTrader, users: updatedUsers
+      })
+    } else if (tradeLog.tradeType === 'loss') {
+      const updatedUsers = await User.updateMany({ trader: id }, {
+        $push: {
+          trades: tradeLog
+        },
+        $inc: {
+          funded: -tradeLog.amount,
+          capital: -tradeLog.amount,
+          totalProfit: -tradeLog.amount,
+        }
+      })
+      res.json({
+        status: 'ok', trader: updatedTrader, users: updatedUsers
       })
     }
 
-    // 5. Prepare Bulk Write Operations
-    const bulkOps = users.map(user => {
-      // Calculate user's specific profit share
-      const userCapital = user.capital || 0;
-      const userShare = userCapital * profitFactor;
-
-      // Create a customized tradeLog for the user with their specific amount
-      // We start with the original log but override the amount.
-      const userTradeLog = { ...tradeLog, amount: userShare };
-
-      let updateDoc = {};
-
-      if (tradeLog.tradeType === 'profit') {
-        updateDoc = {
-          $push: { trades: userTradeLog },
-          $inc: {
-            funded: userShare,
-            capital: userShare,
-            totalProfit: userShare,
-          }
-        };
-      } else if (tradeLog.tradeType === 'loss') {
-        // For loss, userShare is positive (e.g. 50), but we subtract it.
-        // tradeLog.amount is usually positive in the request for 'loss' type based on previous code usage ($inc: -tradeLog.amount).
-        updateDoc = {
-          $push: { trades: userTradeLog },
-          $inc: {
-            funded: -userShare,
-            capital: -userShare,
-            totalProfit: -userShare,
-          }
-        };
-      }
-
-      return {
-        updateOne: {
-          filter: { _id: user._id },
-          update: updateDoc
-        }
-      };
-    });
-
-    // 6. Execute Bulk Write
-    let updatedUsers = { modifiedCount: 0 };
-    if (bulkOps.length > 0) {
-      updatedUsers = await User.bulkWrite(bulkOps);
-    }
-
-    res.json({
-      status: 'ok',
-      trader: updatedTrader,
-      users: updatedUsers // Note: This structure differs slightly from updateMany result but conveys success
-    })
-
   }
   catch (error) {
-    console.error(error); // Log error for debugging
     res.json({
       status: 'error',
     })
@@ -728,134 +691,6 @@ app.get('/api/getUsers', async (req, res) => {
 })
 
 
-app.post('/api/invest', async (req, res) => {
-  const token = req.headers['x-access-token']
-  try {
-    const decode = jwt.verify(token, jwtSecret)
-    const email = decode.email
-    const user = await User.findOne({ email: email })
-
-    const money = (() => {
-      switch (req.body.percent) {
-        case '20%':
-          return (req.body.amount * 20) / 100
-        case '35%':
-          return (req.body.amount * 35) / 100
-        case '50%':
-          return (req.body.amount * 50) / 100
-        case '65%':
-          return (req.body.amount * 65) / 100
-        case '80%':
-          return (req.body.amount * 80) / 100
-        case '100%':
-          return (req.body.amount * 100) / 100
-      }
-    })()
-    if (user.capital >= req.body.amount) {
-      const now = new Date()
-      await User.updateOne(
-        { email: email },
-        {
-          $set: { capital: user.capital - req.body.amount, totalprofit: user.totalprofit + money, withdrawDuration: now.getTime() },
-        }
-      )
-      await User.updateOne(
-        { email: email },
-        {
-          $push: {
-            investment:
-            {
-              type: 'investment',
-              amount: req.body.amount,
-              plan: req.body.plan,
-              percent: req.body.percent,
-              startDate: now.toLocaleString(),
-              endDate: now.setDate(now.getDate() + 432000).toLocaleString(),
-              profit: money,
-              ended: 259200000,
-              started: now.getTime(),
-              periodicProfit: 0
-            },
-            transaction: {
-              type: 'investment',
-              amount: req.body.amount,
-              date: now.toLocaleString(),
-              balance: user.funded + req.body.amount,
-              id: crypto.randomBytes(32).toString("hex")
-            }
-          }
-        }
-      )
-      res.json({ status: 'ok', amount: req.body.amount })
-    } else {
-      res.json({
-        message: 'Insufficient capital!',
-        status: 400
-      })
-    }
-  } catch (error) {
-    return res.json({ status: 500, error: error })
-  }
-})
-
-
-const change = (users, now) => {
-  users.forEach((user) => {
-
-    user.investment.map(async (invest) => {
-      if (isNaN(invest.started)) {
-        console.log('investment is not a number')
-        res.json({ message: 'investment is not a number' })
-        return
-      }
-      if (user.investment == []) {
-        console.log('investment is an empty array')
-        res.json({ message: 'investment is an empty array' })
-        return
-      }
-      if (now - invest.started >= invest.ended) {
-        console.log('investment completed')
-        res.json({ message: 'investment completed' })
-        return
-      }
-      if (isNaN(invest.profit)) {
-        console.log('investment profit is not a number')
-        res.json({ message: 'investment profit is not a number' })
-        return
-      }
-      else {
-        try {
-          await User.updateOne(
-            { email: user.email },
-            {
-              $set: {
-                funded: user.funded + invest.profit,
-                periodicProfit: user.periodicProfit + invest.profit,
-                capital: user.capital + invest.profit,
-                totalProfit: user.totalProfit + invest.profit
-              }
-            }
-          )
-        } catch (error) {
-          console.log(error)
-        }
-      }
-    })
-  })
-}
-app.get('/api/cron', async (req, res) => {
-  try {
-    const users = (await User.find()) ?? []
-    const now = new Date().getTime()
-    change(users, now)
-    return res.json({ status: 200 })
-  } catch (error) {
-    console.log(error)
-    return res.json({ status: 500, message: 'error! timeout' })
-  }
-})
-
-
 app.post('/api/getWithdrawInfo', async (req, res) => {
 
   try {
@@ -949,6 +784,57 @@ app.get('/api/fetchTraders', async (req, res) => {
   }
   catch (error) {
     res.json({ status: 404, error: error })
+  }
+})
+
+app.post('/api/verify', async (req, res) => {
+  const {
+    id
+  } = req.body
+  const user = await User.findOne({ _id: id })
+
+  console.log(user)
+  try {
+    if (user.verified) {
+      await User.updateOne({ _id: id }, {
+        verified: false
+      })
+      res.json({
+        status: 200, verified: user
+      })
+    }
+    else {
+      await User.updateOne({ _id: id }, {
+        verified: true
+      })
+      res.json({
+        status: 201, verified: user
+      })
+    }
+  } catch (error) {
+    res.json({ status: 400, message: `error ${error}` })
+  }
+})
+
+app.get('/:id/verify/:token', async (req, res) => {
+  try {
+    const user = await User.findOne({ _id: req.params.id })
+    if (!user) {
+      return res.json({ status: 400 })
+    }
+    const token = await Token.findOne({ userId: user._id, token: req.params.token })
+
+    if (!token) {
+      return res.json({ status: 400 })
+    }
+    await User.updateOne({ _id: user._id }, {
+      $set: { verified: true }
+    })
+    await token.remove()
+    res.json({ status: 200 })
+  } catch (error) {
+    console.log(error)
+    res.json({ status: `internal server error ${error}` })
   }
 })
 

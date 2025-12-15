@@ -7,6 +7,7 @@ const Admin = require('./models/admin')
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const Trader = require('./models/trader')
+const Token = require('./models/token')
 dotenv.config()
 
 const app = express()
@@ -659,6 +660,9 @@ app.post('/api/login', async (req, res) => {
     // const isPasswordValid = await bcrypt.compare(password, user.password);
     if (password != user.password) {
       return res.json({ status: 401, message: 'Incorrect password' });
+    }
+    if (user.verified  === false) {
+      return res.json({ status: 400, message: 'Email not verified!' });
     }
 
     // Generate JWT token with user ID and email

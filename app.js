@@ -261,7 +261,28 @@ app.get('/api/getData', async (req, res) => {
       rank: user.rank,
       server: user.server,
       trades: user.trades,
-      verified: user.verified
+      verified: user.verified,
+      // KYC Fields
+      middlename: user.middlename,
+      dateOfBirth: user.dateOfBirth,
+      nationality: user.nationality,
+      city: user.city,
+      employmentStatus: user.employmentStatus,
+      occupation: user.occupation,
+      annualIncome: user.annualIncome,
+      sourceOfFunds: user.sourceOfFunds,
+      investmentExperience: user.investmentExperience,
+      idType: user.idType,
+      idNumber: user.idNumber,
+      idExpiry: user.idExpiry,
+      idDocumentFront: user.idDocumentFront,
+      idDocumentBack: user.idDocumentBack,
+      proofOfAddress: user.proofOfAddress,
+      selfiePhoto: user.selfiePhoto,
+      kycStatus: user.kycStatus,
+      kycSubmittedDate: user.kycSubmittedDate,
+      kycApprovedDate: user.kycApprovedDate,
+      kycRejectionReason: user.kycRejectionReason
     });
   } catch (error) {
     console.error('Error fetching user data:', error.message);
@@ -661,7 +682,7 @@ app.post('/api/login', async (req, res) => {
     if (password != user.password) {
       return res.json({ status: 401, message: 'Incorrect password' });
     }
-    if (user.verified  === false) {
+    if (user.verified === false) {
       return res.json({ status: 400, message: 'Email not verified!' });
     }
 
@@ -841,6 +862,134 @@ app.get('/:id/verify/:token', async (req, res) => {
     res.json({ status: `internal server error ${error}` })
   }
 })
+
+// KYC Submission Endpoint
+app.post('/api/submitKYC', async (req, res) => {
+  const token = req.headers['x-access-token'];
+
+  try {
+    if (!token) {
+      return res.status(401).json({ status: 'error', message: 'No token provided' });
+    }
+
+    const decoded = jwt.verify(token, jwtSecret);
+    const email = decoded.email;
+
+    const {
+      middlename,
+      dateOfBirth,
+      nationality,
+      city,
+      employmentStatus,
+      occupation,
+      annualIncome,
+      sourceOfFunds,
+      investmentExperience,
+      idType,
+      idNumber,
+      idExpiry,
+      idDocumentFront,
+      idDocumentBack,
+      proofOfAddress,
+      selfiePhoto
+    } = req.body;
+
+    // Update user with KYC data
+    await User.updateOne(
+      { email },
+      {
+        $set: {
+          middlename,
+          dateOfBirth,
+          nationality,
+          city,
+          employmentStatus,
+          occupation,
+          annualIncome,
+          sourceOfFunds,
+          investmentExperience,
+          idType,
+          idNumber,
+          idExpiry,
+          idDocumentFront,
+          idDocumentBack,
+          proofOfAddress,
+          selfiePhoto,
+          kycStatus: 'processing',
+          kycSubmittedDate: new Date().toLocaleString()
+        }
+      }
+    );
+
+    res.status(200).json({
+      status: 'ok',
+      message: 'KYC submitted successfully and is under review'
+    });
+  } catch (error) {
+    console.error('Error submitting KYC:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+});
+
+// Admin: Approve KYC
+app.post('/api/admin/approveKYC', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    await User.updateOne(
+      { email },
+      {
+        $set: {
+          kycStatus: 'approved',
+          kycApprovedDate: new Date().toLocaleString(),
+          kycRejectionReason: ''
+        }
+      }
+    );
+
+    const user = await User.findOne({ email });
+
+    res.status(200).json({
+      status: 'ok',
+      message: 'KYC approved successfully',
+      userName: user.firstname,
+      userEmail: user.email
+    });
+  } catch (error) {
+    console.error('Error approving KYC:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+});
+
+// Admin: Reject KYC
+app.post('/api/admin/rejectKYC', async (req, res) => {
+  try {
+    const { email, reason } = req.body;
+
+    await User.updateOne(
+      { email },
+      {
+        $set: {
+          kycStatus: 'rejected',
+          kycRejectionReason: reason || 'Documents do not meet requirements',
+          kycApprovedDate: ''
+        }
+      }
+    );
+
+    const user = await User.findOne({ email });
+
+    res.status(200).json({
+      status: 'ok',
+      message: 'KYC rejected',
+      userName: user.firstname,
+      userEmail: user.email
+    });
+  } catch (error) {
+    console.error('Error rejecting KYC:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+});
 
 module.exports = app
 

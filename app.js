@@ -47,24 +47,28 @@ connectDB()
 
 app.get('/api/verifylogged', async (req, res) => {
   const token = req.headers['x-access-token']
+
+  if (!token) {
+    return res.json({ status: 'false' })
+  }
+
   try {
-    const decode = jwt.verify(token, jwtSecret)
-    const email = decode.email
-    const user = await User.findOne({ email: email })
-    if(user){
-      res.json({
-        status: 'ok',
-      })
+    const decoded = jwt.verify(token, jwtSecret) // checks expiration automatically
+
+    const user = await User.findOne({ email: decoded.email }).select('_id')
+
+    if (!user) {
+      return res.json({ status: 'false' })
     }
-    else{
-      res.json({
-        status: 'false',
-      })
-    }
+
+    return res.json({ status: 'true' })
+
   } catch (error) {
-    res.json({ status: `error ${error}` })
+    // Token expired or invalid
+    return res.json({ status: 'false' })
   }
 })
+
 
 app.post('/api/verify', async (req, res) => {
   const {

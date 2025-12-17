@@ -45,6 +45,26 @@ const connectDB = async () => {
 }
 connectDB()
 
+app.get('/api/verifylogged', async (req, res) => {
+  const token = req.headers['x-access-token']
+  try {
+    const decode = jwt.verify(token, jwtSecret)
+    const email = decode.email
+    const user = await User.findOne({ email: email })
+    if(user){
+      res.json({
+        status: 'ok',
+      })
+    }
+    else{
+      res.json({
+        status: 'false',
+      })
+    }
+  } catch (error) {
+    res.json({ status: `error ${error}` })
+  }
+})
 
 app.post('/api/verify', async (req, res) => {
   const {

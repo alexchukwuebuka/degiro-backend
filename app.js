@@ -622,6 +622,51 @@ app.post('/api/updateTraderLog', async (req, res) => {
   }
 })
 
+app.post('/api/getUsersByTrader', async (req, res) => {
+  try {
+    const { traderId } = req.body;
+    const users = await User.find({ trader: traderId });
+    res.json({ status: 200, users });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.post('/api/updateUserTrade', async (req, res) => {
+  try {
+    const { userId, tradeLog } = req.body;
+
+    // Determine the multiplier based on trade type (profit adds, loss subtracts)
+    const multiplier = tradeLog.tradeType === 'profit' ? 1 : -1;
+    const amount = tradeLog.amount * multiplier;
+
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId },
+      {
+        $push: { trades: tradeLog },
+        $inc: {
+          funded: amount,
+          capital: amount,
+          totalProfit: amount,
+          // periodicProfit might also need updating depending on business logic, assuming yes for consistency
+          periodicProfit: amount
+        }
+      },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    res.json({ status: 'ok', user: updatedUser });
+
+  } catch (error) {
+    console.error("Error updating user trade:", error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 app.post('/api/withdraw', async (req, res) => {
   const token = req.headers['x-access-token']
   try {
